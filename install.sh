@@ -24,14 +24,17 @@ have() { command -v "$1" >/dev/null 2>&1; }
 have curl || die "curl is required"
 have tar || die "tar is required"
 
-# NVIDIA builds are made per GPU generation (compute capability) with CUDA 12.8, so they need a
-# matching card and a driver that supports CUDA 12.8 or newer. Prints the build name, or fails.
+# NVIDIA builds are made per GPU generation (compute capability), with CUDA 12.8 (12.4 for 7.5
+# cards), so they need a matching card and a driver supporting that CUDA version or newer.
+# Prints the build name, or fails.
 cuda_variant() {
   cap=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -n1 | tr -d ' .')
   cuda=$(nvidia-smi | sed -n 's/.*CUDA Version: *\([0-9]*\)\.\([0-9]*\).*/\1 \2/p' | head -n1)
   major=${cuda% *}; minor=${cuda#* }
-  if [ -z "$cuda" ] || [ "$major" -lt 12 ] || { [ "$major" -eq 12 ] && [ "$minor" -lt 8 ]; }; then
-    say "NVIDIA driver supports CUDA ${major:-?}.${minor:-?}; the GPU build needs 12.8+. Using the CPU build (update the driver to use the GPU)." >&2
+  need=8
+  [ "$cap" = 75 ] && need=4
+  if [ -z "$cuda" ] || [ "$major" -lt 12 ] || { [ "$major" -eq 12 ] && [ "$minor" -lt "$need" ]; }; then
+    say "NVIDIA driver supports CUDA ${major:-?}.${minor:-?}; the GPU build needs 12.$need+. Using the CPU build (update the driver to use the GPU)." >&2
     return 1
   fi
   case "$cap" in

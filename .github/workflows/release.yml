@@ -11,6 +11,9 @@ permissions:
   contents: write
 
 env:
+  # Release archives don't need debug info; it triples the binaries' size.
+  CARGO_PROFILE_RELEASE_DEBUG: "0"
+  CARGO_PROFILE_RELEASE_STRIP: symbols
   BINS: afo afo-node afo-client afo-probe afo-plan afo-monitor
   PACKAGES: -p afo -p afo-node -p afo-client -p afo-plan -p afo-monitor
 
@@ -66,8 +69,12 @@ jobs:
         cap: ["75", "80", "86", "89", "90", "120"]
         platform: [linux, windows]
         include:
-          - { platform: linux, os: ubuntu-22.04, container: "nvidia/cuda:12.8.1-devel-ubuntu22.04" }
-          - { platform: windows, os: windows-2022 }
+          - { platform: linux, os: ubuntu-22.04, cuda: "12.8.1", container: "nvidia/cuda:12.8.1-devel-ubuntu22.04" }
+          - { platform: windows, os: windows-2022, cuda: "12.8.1" }
+          # candle's kernels clash with half-precision helpers CUDA 12.8 added for older GPUs, so
+          # compute capability 7.5 builds with CUDA 12.4.
+          - { platform: linux, cap: "75", cuda: "12.4.1", container: "nvidia/cuda:12.4.1-devel-ubuntu22.04" }
+          - { platform: windows, cap: "75", cuda: "12.4.1" }
     env:
       ASSET: ${{ matrix.platform }}-x86_64-cuda-sm${{ matrix.cap }}
       CUDA_COMPUTE_CAP: ${{ matrix.cap }}
@@ -86,7 +93,7 @@ jobs:
         if: runner.os == 'Windows'
         uses: Jimver/cuda-toolkit@v0.2.36
         with:
-          cuda: "12.8.1"
+          cuda: ${{ matrix.cuda }}
           method: network
           sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "curand", "curand_dev", "nvrtc", "nvrtc_dev"]'
 
@@ -103,10 +110,11 @@ jobs:
           RUSTFLAGS: -C link-arg=-Wl,--disable-new-dtags,-rpath,$ORIGIN
         run: cargo build --release --locked $PACKAGES --features afo/cuda,afo-node/cuda,afo-client/cuda,afo-plan/cuda
 
+      # PowerShell, not Git Bash: Git Bash's /usr/bin/link shadows MSVC's link.exe.
       - name: Build (Windows)
         if: runner.os == 'Windows'
-        shell: bash
-        run: cargo build --release --locked $PACKAGES --features afo/cuda,afo-node/cuda,afo-client/cuda,afo-plan/cuda
+        shell: pwsh
+        run: cargo build --release --locked -p afo -p afo-node -p afo-client -p afo-plan -p afo-monitor --features afo/cuda,afo-node/cuda,afo-client/cuda,afo-plan/cuda
 
       - name: Package
         shell: bash

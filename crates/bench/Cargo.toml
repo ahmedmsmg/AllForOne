@@ -1,0 +1,15 @@
+[package]
+name = "afo-bench"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+afo-client.workspace = true
+afo-codec.workspace = true
+afo-engine.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tracing-subscriber.workspace = true
+afo-proto.workspace = true
+tokenizers = { version = "0.22", default-features = false, features = ["onig"] }

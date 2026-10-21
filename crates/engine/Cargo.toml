@@ -1,0 +1,14 @@
+[package]
+name = "afo-engine"
+version.workspace = true
+edition.workspace = true
+
+[features]
+cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
+metal = ["candle-core/metal", "candle-nn/metal", "candle-transformers/metal"]
+
+[dependencies]
+candle-core.workspace = true
+candle-nn.workspace = true
+candle-transformers.workspace = true
+anyhow.workspace = true

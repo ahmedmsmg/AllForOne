@@ -1,0 +1,22 @@
+[package]
+name = "afo-client"
+version.workspace = true
+edition.workspace = true
+
+[features]
+cuda = ["afo-engine/cuda"]
+metal = ["afo-engine/metal"]
+
+[dependencies]
+afo-proto.workspace = true
+afo-codec.workspace = true
+afo-engine.workspace = true
+candle-core.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
+rand = "0.9"
+candle-transformers.workspace = true

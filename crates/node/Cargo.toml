@@ -1,0 +1,18 @@
+[package]
+name = "afo-node"
+version.workspace = true
+edition.workspace = true
+
+[features]
+cuda = ["afo-engine/cuda"]
+metal = ["afo-engine/metal"]
+
+[dependencies]
+afo-proto.workspace = true
+afo-codec.workspace = true
+afo-engine.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

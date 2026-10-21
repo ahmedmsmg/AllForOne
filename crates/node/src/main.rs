@@ -1,13 +1,17 @@
 //! Pipeline node: runs one contiguous block of layers and pushes results to the next hop.
+//! It also answers `GET /status` over TCP on the same port number, for `afo-monitor`.
 
-use std::{collections::HashMap, net::SocketAddr, ops::Range, path::PathBuf, sync::Arc, time::{Duration, Instant}};
+mod status;
+
+use std::{collections::HashMap, net::SocketAddr, ops::Range, path::PathBuf, sync::{Arc, Mutex}, time::{Duration, Instant}};
 
 use afo_codec::CodecKind;
 use afo_engine::{CandleEngine, Engine, LoadOpts, Shard};
-use afo_proto::{Forward, HopStat, Inbound, Msg, Net, NetOpts};
+use afo_proto::{Forward, HopStat, Inbound, Msg, Net, NetOpts, http, status::STATUS_PATH};
 use anyhow::{Context, Result};
 use clap::Parser;
-use tokio::sync::mpsc::UnboundedReceiver;
+use status::{Activity, Info};
+use tokio::{net::TcpListener, sync::mpsc::UnboundedReceiver};
 use tracing::{info, warn};
 
 #[derive(Parser)]
@@ -62,12 +66,38 @@ async fn main() -> Result<()> {
     let (net, rx) = Net::bind(args.listen, NetOpts { sim_delay: Duration::from_millis(args.sim_delay_ms) })?;
     info!("listening on {}", net.local_addr()?);
 
+    let activity = Arc::new(Mutex::new(Activity::new()));
+    let info = Info {
+        host: sysinfo::System::host_name().unwrap_or_default(),
+        model: args.model.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default(),
+        n_layer: shard.cfg.n_layer,
+        layers: args.layers.clone(),
+        device: args.device.clone(),
+    };
+    let resources = Arc::default();
+    status::spawn_sampler(&args.device, Arc::clone(&resources));
+    // Status is a convenience: a node without it still serves the ring.
+    match TcpListener::bind(net.local_addr()?).await {
+        Ok(listener) => {
+            info!("status on http://{}{STATUS_PATH}", listener.local_addr()?);
+            let activity = activity.clone();
+            tokio::spawn(http::serve(listener, move |path| match path {
+                STATUS_PATH => {
+                    let status = activity.lock().unwrap().snapshot(&info, &resources.lock().unwrap());
+                    http::Response::json(serde_json::to_string(&status).expect("status serializes"))
+                }
+                _ => http::Response::not_found(),
+            }));
+        }
+        Err(e) => warn!("no status endpoint: {e}"),
+    }
+
     // Compute runs on its own thread so blocking matmuls never stall the network tasks.
-    let worker = std::thread::spawn(move || serve(CandleEngine::new(shard), net, rx));
+    let worker = std::thread::spawn(move || serve(CandleEngine::new(shard), net, rx, activity));
     tokio::task::spawn_blocking(move || worker.join()).await?.expect("worker panicked")
 }
 
-fn serve(mut engine: impl Engine, net: Arc<Net>, mut rx: UnboundedReceiver<Inbound>) -> Result<()> {
+fn serve(mut engine: impl Engine, net: Arc<Net>, mut rx: UnboundedReceiver<Inbound>, activity: Arc<Mutex<Activity>>) -> Result<()> {
     let mut sessions: HashMap<u64, Session> = HashMap::new();
     while let Some((from, msg)) = rx.blocking_recv() {
         match msg {
@@ -80,6 +110,7 @@ fn serve(mut engine: impl Engine, net: Arc<Net>, mut rx: UnboundedReceiver<Inbou
                 net.send(s.next(), &Msg::Open { session, route, hop: hop + 1 })?;
                 info!("session {session}: hop {hop}, next {}", s.next());
                 sessions.insert(session, s);
+                activity.lock().unwrap().sessions = sessions.len();
             }
             Msg::Forward(f) => {
                 let Some(s) = sessions.get(&f.session) else {
@@ -88,8 +119,13 @@ fn serve(mut engine: impl Engine, net: Arc<Net>, mut rx: UnboundedReceiver<Inbou
                 };
                 let (session, step) = (f.session, f.step);
                 match run_step(&mut engine, f) {
-                    Ok(out) => net.send(s.next(), &Msg::Forward(out))?,
+                    Ok(out) => {
+                        let busy = out.hops.last().map_or(0, |h| h.busy_us);
+                        activity.lock().unwrap().record(out.n_tokens, Duration::from_micros(busy as u64));
+                        net.send(s.next(), &Msg::Forward(out))?
+                    }
                     Err(e) => {
+                        activity.lock().unwrap().error();
                         warn!("session {session} step {step}: {e:#}");
                         let message = format!("{e:#}");
                         net.send(s.client(), &Msg::Error { session, hop: s.hop, message })?;
@@ -100,6 +136,7 @@ fn serve(mut engine: impl Engine, net: Arc<Net>, mut rx: UnboundedReceiver<Inbou
                 engine.close(session);
                 if let Some(s) = sessions.remove(&session) {
                     net.send(s.next(), &Msg::Close { session })?;
+                    activity.lock().unwrap().sessions = sessions.len();
                     info!("session {session}: closed");
                 }
             }

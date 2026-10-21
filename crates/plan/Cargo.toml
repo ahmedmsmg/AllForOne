@@ -1,0 +1,18 @@
+[package]
+name = "afo-plan"
+version.workspace = true
+edition.workspace = true
+
+[features]
+cuda = ["afo-engine/cuda"]
+metal = ["afo-engine/metal"]
+
+[dependencies]
+afo-engine.workspace = true
+candle-core.workspace = true
+candle-nn.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sysinfo = { version = "0.39", default-features = false, features = ["system", "disk"] }

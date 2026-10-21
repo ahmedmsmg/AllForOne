@@ -29,6 +29,8 @@ client ──► node 1 (layers 0..a) ──► node 2 (a..b) ──► … ─�
 | `afo-node` | Node binary: runs one block of layers |
 | `afo-client` | Client library and CLI: embedding, head, sampling, `LocalPipeline` / `RemotePipeline` |
 | `afo-bench` | Checks split execution against a single-machine reference and reports latency |
+| `afo-plan` | `afo-probe` measures a machine; `afo-plan` picks a model and layer split for the group |
+| `afo-monitor` | Web dashboard: which nodes are up, what they run, their resource use, tokens/s |
 
 ## Quickstart (one machine)
 
@@ -59,6 +61,65 @@ Build with `--features cuda` or `--features metal` on `afo-node` or `afo-client`
 then pass `--device cuda:0` or `--device metal`.
 Each address must be reachable directly for now. NAT traversal comes in Phase 3.
 
+## Planning a group
+
+Instead of choosing a model and layer ranges by hand, let the planner do it from measurements.
+
+1. **Every machine, including yours**, builds and runs the probe. Use the same GPU feature you'll run
+   nodes with: `--features cuda` on NVIDIA, `--features metal` on Apple silicon.
+   ```sh
+   cargo build --release -p afo-plan -p afo-node -p afo-client --features afo-node/cuda,afo-plan/cuda
+   target/release/afo-probe --name sara      # writes sara.json
+   ```
+   It reports usable RAM and VRAM, free disk under `models/`, and benchmarks each device for a few
+   seconds. It picks up a Tailscale IP automatically. Otherwise pass `--addr <ip>`. Pass
+   `--ram-limit-gb` or `--vram-limit-gb` to offer less than everything.
+2. **Everyone sends their JSON** to whoever runs the client.
+3. **The client runs the planner** on all of the reports:
+   ```sh
+   target/release/afo-plan ahmed.json sara.json omar.json --client ahmed
+   ```
+   It lists every catalog model as fitting or not, with an estimated speed. It chooses the best
+   model that fits and reaches `--min-tok-s` (default 2), then prints each person's download and
+   `afo-node` command and the client's `afo-client` command.
+
+How the planner decides:
+- **Best model.** More parameters first, then more bits per weight. The catalog has Llama 3.2
+  1B/3B, Llama 3.1 8B and Llama 3.3 70B in single-file GGUFs (`crates/plan/src/catalog.rs`).
+- **Memory.** Each device needs room for its layers' weights, an f32 KV cache for `--ctx` tokens
+  (default 4096), prefill scratch for a `--prompt-tokens` prompt (default 1024) and runtime
+  overhead. The client's machine also holds the f32 embedding and the output head. Each machine
+  that runs anything needs the whole model file on disk.
+- **Speed.** Per token, every layer runs once in sequence, so time is the sum of each layer's time on
+  its device plus `--hop-ms` (default 30) per network hop. The planner fills the fastest devices
+  first, and leaves out machines whose extra hop costs more than the layers they would take. A
+  machine with a GPU can run two nodes, one on the GPU and one on its CPU, on consecutive ports.
+- The probe benchmarks one Llama-8B-sized block of Q4_K weights. On the 1B model it predicted
+  16.8 tok/s against a measured 17.2 (CPU, one thread per physical core). CPU commands set
+  `RAYON_NUM_THREADS` to the physical core count, because extra hyperthreads slow decoding down.
+
+## Monitoring
+
+Every node answers `GET /status` over **TCP** on the same port number it uses for QUIC (UDP), so
+nothing else needs opening. `afo-monitor` polls the nodes once a second and serves a dashboard:
+
+```sh
+afo-monitor --nodes 100.64.0.2:7100,100.64.0.3:7100        # the same list as --route
+afo-plan *.json --json > plan.json && afo-monitor --plan plan.json
+```
+
+Open http://127.0.0.1:7300. Add `--listen 0.0.0.0:7300` to view it from another device, such as
+your phone over Tailscale. The page shows:
+- ring health, the model, and how many layers live nodes cover
+- tokens/s now, the peak, and a 5-minute chart. Every generated token passes every node, so a node's
+  step rate is the ring's generation rate. The client doesn't need to report anything.
+- a layer map showing which node runs which layers, with missing layers hatched
+- per node: online or offline, CPU, RAM, GPU and VRAM use (NVIDIA via `nvidia-smi`), busy share,
+  last step time, step and token counts
+
+The status endpoint is read-only but unauthenticated. It reveals the model, hostname and
+resource use to anyone who can reach the port.
+
 ## Phase 1 results (Llama-3.2-1B Q4_K_M, 3 local nodes, CPU, 4 threads each)
 
 | run | tokens matching reference | max \|Δlogit\| | decode tok/s | network ms/token |
@@ -79,6 +140,7 @@ tokens/s before any compute. Phase 2 (speculative decoding) targets this.
 2. Speculative decoding (a local draft model; a whole draft block verified in one ring pass) and
    prefill overlap.
 3. Coordinator: discovery, latency-aware layer placement, NAT traversal, failover with KV replay.
+   Offline planning from hardware probes (`afo-plan`) is done. Live discovery is next.
 4. Security: node identity, integrity spot-checks, an RNS research codec for private linear blocks.
 
 Known Phase 1 limits:

@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AllForOne Monitor</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.10);
+  --accent: #2a78d6;
+  --accent-wash: rgba(42, 120, 214, 0.10);
+  --track: #cde2fb;
+  --gap-fill: #f0efec;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+  --s5: #e87ba4; --s6: #008300; --s7: #6250d6; --s8: #e34948;
+  --other: #898781;
+  --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.10);
+    --accent: #3987e5; --accent-wash: rgba(57, 135, 229, 0.12); --track: #184f95; --gap-fill: #383835;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+    --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.10);
+  --accent: #3987e5; --accent-wash: rgba(57, 135, 229, 0.12); --track: #184f95; --gap-fill: #383835;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+  --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--page); color: var(--ink);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+main { max-width: 1180px; margin: 0 auto; padding: 24px 16px 48px; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-bottom: 4px; }
+h1 { font-size: 20px; font-weight: 600; margin: 0; }
+h2 { font-size: 15px; font-weight: 600; margin: 0; }
+.sub { color: var(--ink-2); margin: 0 0 20px; overflow-wrap: anywhere; }
+.updated { color: var(--muted); margin-left: auto; font-size: 13px; }
+.card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 16px 18px; min-width: 0;
+}
+.card-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.card-head .note { color: var(--muted); font-size: 13px; }
+.card-head button { margin-left: auto; }
+button {
+  font: inherit; font-size: 13px; color: var(--ink-2); background: transparent;
+  border: 1px solid var(--border); border-radius: 6px; padding: 3px 10px; cursor: pointer;
+}
+button:hover { background: var(--accent-wash); color: var(--ink); }
+
+.badge { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; color: var(--ink); white-space: nowrap; }
+.badge .ico { width: 16px; height: 16px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 10px; color: #fff; font-weight: 700; flex: none; }
+.ico.good { background: var(--good); } .ico.warning { background: var(--warning); color: #0b0b0b; }
+.ico.serious { background: var(--serious); color: #0b0b0b; } .ico.critical { background: var(--critical); }
+.ico.neutral { background: transparent; border: 2px solid var(--muted); }
+
+.tiles { display: grid; grid-template-columns: 1.4fr repeat(3, 1fr); gap: 12px; margin-bottom: 12px; }
+.tile .label { color: var(--ink-2); font-size: 13px; }
+.tile .value { font-size: 28px; font-weight: 600; margin-top: 2px; }
+.tile .value small { font-size: 14px; font-weight: 500; color: var(--ink-2); margin-left: 4px; }
+.tile .hint { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.tile.hero .value { font-size: 52px; line-height: 1.05; }
+
+#chart { position: relative; }
+#chart svg { display: block; width: 100%; height: 220px; overflow: visible; }
+#chart text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.tip {
+  position: absolute; pointer-events: none; background: var(--surface); color: var(--ink);
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font-size: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12); white-space: nowrap; display: none; z-index: 2;
+}
+.tip b { font-size: 14px; }
+.empty { color: var(--muted); text-align: center; padding: 64px 0; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 13px; }
+th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--grid); }
+th { color: var(--ink-2); font-weight: 500; }
+td.num, th.num { text-align: right; }
+.table-wrap { max-height: 240px; overflow: auto; }
+
+.stack { display: grid; gap: 12px; }
+#layermap .bar { display: flex; gap: 2px; height: 34px; }
+#layermap .seg {
+  position: relative; min-width: 3px; display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 600; white-space: nowrap; cursor: default;
+}
+#layermap .seg:first-child { border-radius: 4px 0 0 4px; }
+#layermap .seg:last-child { border-radius: 0 4px 4px 0; }
+#layermap .seg:only-child { border-radius: 4px; }
+.hatch { background: repeating-linear-gradient(45deg, var(--gap-fill) 0 4px, transparent 4px 8px); outline: 1px solid var(--axis); outline-offset: -1px; color: var(--ink-2) !important; }
+.ends { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-size: 13px; color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 12px; height: 12px; border-radius: 3px; flex: none; display: inline-block; }
+
+#nodes { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 12px; }
+.node.off { opacity: 0.72; }
+.node-top { display: flex; align-items: flex-start; gap: 10px; }
+.node-top .name { font-weight: 600; font-size: 15px; overflow-wrap: anywhere; }
+.node-top .badge { margin-left: auto; }
+.node .meta { color: var(--ink-2); font-size: 13px; margin: 2px 0 12px 22px; overflow-wrap: anywhere; }
+.node .err { color: var(--ink-2); font-size: 12px; margin: 4px 0 10px 22px; overflow-wrap: anywhere; }
+.node .meta + .err { margin-top: -6px; }
+.meter { margin-bottom: 9px; }
+.meter .row { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+.meter .row span:first-child { color: var(--ink-2); }
+.meter .row span:last-child { font-variant-numeric: tabular-nums; text-align: right; }
+.meter .track { height: 6px; border-radius: 3px; background: var(--track); margin-top: 3px; overflow: hidden; }
+.meter .fill { height: 100%; border-radius: 3px; background: var(--accent); transition: width 0.4s; }
+.meter .fill.hot { background: var(--serious); }
+.facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 12px; margin: 12px 0 0; padding-top: 12px; border-top: 1px solid var(--grid); }
+.facts div { min-width: 0; }
+.facts dt { color: var(--muted); font-size: 12px; }
+.facts dd { margin: 0; font-variant-numeric: tabular-nums; font-size: 13px; }
+#banner { display: none; margin-bottom: 12px; }
+
+@media (max-width: 820px) {
+  .tiles { grid-template-columns: 1fr 1fr; }
+  .tile.hero { grid-column: 1 / -1; }
+}
+@media (max-width: 420px) {
+  #nodes { grid-template-columns: 1fr; }
+  .facts { grid-template-columns: 1fr 1fr; }
+  .tile.hero .value { font-size: 48px; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>AllForOne</h1>
+    <span id="health" class="badge"></span>
+    <span id="updated" class="updated"></span>
+  </header>
+  <p id="model" class="sub">Connecting…</p>
+  <div id="banner" class="card"><span class="badge"><span class="ico critical">✕</span>Can't reach the monitor process. Is afo-monitor still running?</span></div>
+
+  <section class="tiles">
+    <div class="card tile hero"><div class="label">Generation speed now</div><div class="value" id="t-rate">–</div><div class="hint" id="t-rate-hint"></div></div>
+    <div class="card tile"><div class="label">Peak, last 5 min</div><div class="value" id="t-peak">–</div><div class="hint" id="t-avg"></div></div>
+    <div class="card tile"><div class="label">Nodes online</div><div class="value" id="t-nodes">–</div><div class="hint" id="t-sessions"></div></div>
+    <div class="card tile"><div class="label">Layers covered</div><div class="value" id="t-layers">–</div><div class="hint" id="t-layers-hint"></div></div>
+  </section>
+
+  <div class="stack">
+    <section class="card">
+      <div class="card-head"><h2>Tokens per second, last 5 minutes</h2><span class="note">all sessions</span><button id="tbl-btn" type="button">Show table</button></div>
+      <div id="chart"><svg aria-label="Tokens per second over the last five minutes"></svg><div class="tip"></div></div>
+      <div id="chart-table" class="table-wrap" hidden></div>
+    </section>
+
+    <section class="card" id="layermap">
+      <div class="card-head"><h2>Layer map</h2><span class="note">which node runs which layers</span></div>
+      <div class="bar"></div>
+      <div class="ends"><span>layer 0</span><span id="lm-end"></span></div>
+      <div class="legend"></div>
+    </section>
+
+    <section>
+      <div class="card-head" style="margin: 8px 2px 10px"><h2>Nodes</h2><span class="note">in the order given to afo-monitor</span></div>
+      <div id="nodes"></div>
+    </section>
+  </div>
+</main>
+<div class="tip" id="seg-tip"></div>
+
+<script>
+"use strict";
+const SLOTS = 8;
+let data = null;
+let showTable = false;
+
+const $ = (sel) => document.querySelector(sel);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const gb = (b) => (b / 1e9).toFixed(1) + " GB";
+const rate = (r) => (r >= 100 ? r.toFixed(0) : r.toFixed(1));
+const int = (n) => Math.round(n).toLocaleString();
+const nodeColor = (i) => (i < SLOTS ? `var(--s${i + 1})` : "var(--other)");
+const modelName = (m) => m.replace(/\.gguf$/i, "");
+// The host name, plus the port when several nodes run on one host.
+function nodeLabel(n) {
+  const same = data.nodes.filter((o) => o.status?.host === n.status.host).length;
+  return same > 1 ? `${n.status.host}:${n.addr.split(":").pop()}` : n.status.host;
+}
+function dur(s) {
+  if (s < 60) return `${Math.round(s)}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
+function badge(kind, icon, text) {
+  return `<span class="ico ${kind}" aria-hidden="true">${icon}</span>${esc(text)}`;
+}
+function cssColor(v) {
+  return getComputedStyle(document.documentElement).getPropertyValue(v.slice(4, -1)).trim();
+}
+// Ink or white inside a colored fill, whichever reads better.
+function inkOn(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+  const L = 0.2126 * lin(n >> 16) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
+  return L > 0.33 ? "#0b0b0b" : "#ffffff";
+}
+
+function analyze(nodes) {
+  const known = nodes.map((n, i) => ({ ...n, i })).filter((n) => n.status);
+  const online = nodes.filter((n) => n.online);
+  const models = [...new Set(known.map((n) => n.status.model))];
+  const nLayer = known.reduce((m, n) => Math.max(m, n.status.n_layer), 0);
+  // For each layer, the first online node running it.
+  const owner = new Array(nLayer).fill(-1);
+  const count = new Array(nLayer).fill(0);
+  for (const n of known) {
+    if (!n.online) continue;
+    for (let l = n.status.layers.start; l < Math.min(n.status.layers.end, nLayer); l++) {
+      if (owner[l] < 0) owner[l] = n.i;
+      count[l]++;
+    }
+  }
+  const covered = owner.filter((o) => o >= 0).length;
+  const overlap = count.some((c) => c > 1);
+  const pieces = [];
+  for (let l = 0; l < nLayer; l++) {
+    const last = pieces[pieces.length - 1];
+    if (last && last.owner === owner[l]) last.end = l + 1;
+    else pieces.push({ owner: owner[l], start: l, end: l + 1 });
+  }
+  let health;
+  if (online.length === 0) health = ["critical", "✕", "Ring down"];
+  else if (online.length < nodes.length || covered < nLayer || models.length > 1 || overlap) health = ["warning", "!", "Ring degraded"];
+  else health = ["good", "✓", "Ring healthy"];
+  return { known, online, models, nLayer, covered, overlap, pieces, health };
+}
+
+function render() {
+  if (!data) return;
+  const a = analyze(data.nodes);
+  const hist = data.history;
+  const now = hist.length ? hist[hist.length - 1][1] : 0;
+  const active = hist.filter((h) => h[1] > 0).map((h) => h[1]);
+
+  $("#health").innerHTML = badge(...a.health);
+  $("#updated").textContent = `updated ${new Date().toLocaleTimeString()}`;
+  let model = "No node has reported yet.";
+  if (a.models.length === 1) model = `${modelName(a.models[0])} · ${a.nLayer} layers`;
+  else if (a.models.length > 1) model = `Nodes report different models: ${a.models.map(modelName).join(", ")}. All nodes must load the same file.`;
+  $("#model").textContent = model;
+
+  $("#t-rate").innerHTML = `${rate(now)}<small>tok/s</small>`;
+  const idle = a.online.map((n) => n.status?.idle_s).filter((s) => s != null);
+  $("#t-rate-hint").textContent = now > 0 ? "generating" : idle.length ? `idle, last token ${dur(Math.min(...idle))} ago` : "idle, nothing generated yet";
+  $("#t-peak").innerHTML = active.length ? `${rate(Math.max(...active))}<small>tok/s</small>` : "–";
+  $("#t-avg").textContent = active.length ? `average ${rate(active.reduce((s, x) => s + x, 0) / active.length)} tok/s while generating` : "";
+  $("#t-nodes").innerHTML = `${a.online.length}<small>of ${data.nodes.length}</small>`;
+  const sessions = Math.max(0, ...a.online.map((n) => n.status.sessions));
+  $("#t-sessions").textContent = `${sessions} open session${sessions === 1 ? "" : "s"}`;
+  $("#t-layers").innerHTML = a.nLayer ? `${a.covered}<small>of ${a.nLayer}</small>` : "–";
+  $("#t-layers-hint").textContent = !a.nLayer ? "" : a.overlap ? "some layers run on two nodes" : a.covered < a.nLayer ? `${a.nLayer - a.covered} missing` : "complete";
+
+  renderChart(hist);
+  renderLayerMap(a);
+  renderNodes(a);
+}
+
+function renderChart(hist) {
+  const box = $("#chart");
+  const svg = box.querySelector("svg");
+  const tip = box.querySelector(".tip");
+  if (!hist.length || hist.every((h) => h[1] === 0)) {
+    svg.style.display = "none";
+    let empty = box.querySelector(".empty");
+    if (!empty) { empty = document.createElement("div"); empty.className = "empty"; box.appendChild(empty); }
+    empty.textContent = "No tokens generated in the last 5 minutes. Start afo-client and the speed shows up here.";
+  } else {
+    box.querySelector(".empty")?.remove();
+    svg.style.display = "";
+    drawChart(svg, tip, hist);
+  }
+  const tbl = $("#chart-table");
+  tbl.hidden = !showTable;
+  if (showTable) {
+    const rows = hist.slice(-60).reverse().map((h) => `<tr><td>${new Date(h[0] * 1000).toLocaleTimeString()}</td><td class="num">${h[1].toFixed(2)}</td></tr>`).join("");
+    tbl.innerHTML = `<table><thead><tr><th>Time</th><th class="num">Tokens/s</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+}
+
+// A round tick step that splits 0..v into at most four intervals.
+function niceStep(v) {
+  if (v <= 0) return 0.25;
+  const raw = v / 4, p = 10 ** Math.floor(Math.log10(raw));
+  for (const m of [1, 2, 5, 10]) if (m * p >= raw) return m * p;
+  return 10 * p;
+}
+
+function drawChart(svg, tip, hist) {
+  const W = svg.clientWidth || 600, H = 220;
+  const m = { l: 36, r: 12, t: 10, b: 24 };
+  const span = (data.interval_ms / 1000) * 300;
+  const t1 = hist[hist.length - 1][0], t0 = t1 - span;
+  const top = Math.max(...hist.map((h) => h[1])) * 1.05;
+  const step = niceStep(top);
+  const ticks = Math.max(1, Math.ceil(top / step));
+  const yMax = step * ticks;
+  const x = (t) => m.l + ((t - t0) / span) * (W - m.l - m.r);
+  const y = (v) => m.t + (1 - v / yMax) * (H - m.t - m.b);
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+
+  let g = "";
+  for (let k = 0; k <= ticks; k++) {
+    const v = step * k, yy = y(v).toFixed(1);
+    g += `<line x1="${m.l}" x2="${W - m.r}" y1="${yy}" y2="${yy}" stroke="${k ? "var(--grid)" : "var(--axis)"}" stroke-width="1"/>`;
+    g += `<text x="${m.l - 8}" y="${yy}" text-anchor="end" dominant-baseline="middle">${+v.toFixed(2)}</text>`;
+  }
+  for (const mins of [5, 4, 3, 2, 1, 0]) {
+    const t = t1 - mins * 60 * (span / 300);
+    g += `<text x="${x(t).toFixed(1)}" y="${H - 6}" text-anchor="${mins === 5 ? "start" : mins === 0 ? "end" : "middle"}">${mins ? `−${mins}m` : "now"}</text>`;
+  }
+  const pts = hist.filter((h) => h[0] >= t0).map((h) => [x(h[0]), y(h[1])]);
+  const line = pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join("");
+  const area = `${line}L${pts[pts.length - 1][0].toFixed(1)},${y(0)}L${pts[0][0].toFixed(1)},${y(0)}Z`;
+  const end = pts[pts.length - 1];
+  g += `<path d="${area}" fill="var(--accent-wash)"/>`;
+  g += `<path d="${line}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  g += `<circle cx="${end[0]}" cy="${end[1]}" r="4" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>`;
+  g += `<g class="hover" style="display:none"><line y1="${m.t}" y2="${H - m.b}" stroke="var(--axis)" stroke-width="1"/><circle r="4" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/></g>`;
+  g += `<rect x="${m.l}" y="0" width="${W - m.l - m.r}" height="${H}" fill="transparent"/>`;
+  svg.innerHTML = g;
+
+  const hover = svg.querySelector(".hover");
+  const hit = svg.querySelector("rect");
+  const show = (ev) => {
+    const r = svg.getBoundingClientRect();
+    const px = ((ev.clientX - r.left) / r.width) * W;
+    let best = hist[0];
+    for (const h of hist) if (Math.abs(x(h[0]) - px) < Math.abs(x(best[0]) - px)) best = h;
+    const cx = x(best[0]), cy = y(best[1]);
+    hover.style.display = "";
+    hover.querySelector("line").setAttribute("x1", cx);
+    hover.querySelector("line").setAttribute("x2", cx);
+    hover.querySelector("circle").setAttribute("cx", cx);
+    hover.querySelector("circle").setAttribute("cy", cy);
+    tip.innerHTML = `<b>${best[1].toFixed(2)}</b> tok/s<br><span style="color:var(--muted)">${new Date(best[0] * 1000).toLocaleTimeString()}</span>`;
+    tip.style.display = "block";
+    const left = (cx / W) * r.width;
+    tip.style.left = `${Math.min(Math.max(left - tip.offsetWidth / 2, 0), r.width - tip.offsetWidth)}px`;
+    tip.style.top = `${Math.max((cy / H) * r.height - tip.offsetHeight - 12, 0)}px`;
+  };
+  hit.addEventListener("pointermove", show);
+  hit.addEventListener("pointerleave", () => { hover.style.display = "none"; tip.style.display = "none"; });
+}
+
+function renderLayerMap(a) {
+  const bar = $("#layermap .bar");
+  const legend = $("#layermap .legend");
+  $("#lm-end").textContent = a.nLayer ? `layer ${a.nLayer - 1}` : "";
+  if (!a.nLayer) {
+    bar.innerHTML = `<div class="seg hatch" style="flex:1">waiting for nodes</div>`;
+    legend.innerHTML = "";
+    return;
+  }
+  const byIndex = Object.fromEntries(a.known.map((n) => [n.i, n]));
+  bar.innerHTML = a.pieces.map((p, k) => {
+    const n = byIndex[p.owner];
+    const range = p.end - p.start === 1 ? `layer ${p.start}` : `layers ${p.start}–${p.end - 1}`;
+    if (!n) return `<div class="seg hatch" style="flex:${p.end - p.start}" data-tip="Missing: ${range}" data-k="${k}"><span>missing</span></div>`;
+    const fill = cssColor(nodeColor(n.i));
+    return `<div class="seg" style="flex:${p.end - p.start};background:${fill};color:${inkOn(fill)}" data-tip="${esc(nodeLabel(n))} (${esc(n.addr)}): ${range}"><span>${esc(nodeLabel(n))}</span></div>`;
+  }).join("");
+  // Only keep a label that fits inside its segment with room to spare.
+  for (const seg of bar.children) {
+    const label = seg.querySelector("span");
+    if (label && label.offsetWidth + 16 > seg.clientWidth) label.style.visibility = "hidden";
+  }
+  const items = data.nodes.map((n, i) => {
+    if (!n.status) return "";
+    const l = n.status.layers;
+    const sw = n.online ? `background:${nodeColor(i)}` : "";
+    return `<span><i class="sw ${n.online ? "" : "hatch"}" style="${sw}"></i>${esc(nodeLabel(n))} · layers ${l.start}–${l.end - 1}${n.online ? "" : " (offline)"}</span>`;
+  });
+  if (a.covered < a.nLayer) items.push(`<span><i class="sw hatch"></i>Missing, no online node runs these</span>`);
+  legend.innerHTML = items.join("");
+}
+
+function meter(label, value, pct) {
+  const hot = pct >= 90;
+  return `<div class="meter"><div class="row"><span>${label}</span><span>${hot ? "▲ " : ""}${value}</span></div>` +
+    `<div class="track"><div class="fill ${hot ? "hot" : ""}" style="width:${Math.min(Math.max(pct, 0), 100).toFixed(1)}%"></div></div></div>`;
+}
+
+function renderNodes(a) {
+  $("#nodes").innerHTML = data.nodes.map((n, i) => {
+    const s = n.status;
+    const title = s ? `${esc(nodeLabel(n))} · ${esc(s.device)}` : esc(n.addr);
+    let state;
+    if (!n.online) state = badge("critical", "✕", n.seen_s_ago != null ? `Offline ${dur(n.seen_s_ago)}` : "Offline");
+    else if (s.decode_tok_s > 0 || (s.idle_s != null && s.idle_s < 3)) state = badge("good", "●", "Working");
+    else state = badge("neutral", "", "Idle");
+    const meta = s ? `${esc(n.addr)} · layers ${s.layers.start}–${s.layers.end - 1} (${s.layers.end - s.layers.start} of ${s.n_layer})` : "";
+    const err = !n.online && n.error ? `<div class="err">${esc(n.error)}</div>`
+      : s && s.errors ? `<div class="err"><span class="badge">${badge("warning", "!", `${int(s.errors)} failed step${s.errors === 1 ? "" : "s"}`)}</span></div>` : "";
+    let body = "";
+    if (s) {
+      const r = s.res;
+      body += meter("CPU (this node)", `${r.cpu_pct.toFixed(0)}%`, r.cpu_pct);
+      body += meter("System RAM", `node ${gb(r.rss)} · ${gb(r.ram_used)} of ${gb(r.ram_total)}`, (r.ram_used / r.ram_total) * 100);
+      if (r.gpu) {
+        body += meter(`GPU · ${esc(r.gpu.name)}`, `${r.gpu.util_pct.toFixed(0)}%`, r.gpu.util_pct);
+        body += meter("GPU memory", `${gb(r.gpu.mem_used)} of ${gb(r.gpu.mem_total)}`, (r.gpu.mem_used / r.gpu.mem_total) * 100);
+      } else if (s.device === "metal") {
+        body += `<div class="err" style="margin:0 0 9px">Apple GPU shares system RAM; there is no separate GPU memory gauge.</div>`;
+      }
+      const facts = [
+        ["Busy", `${s.busy_pct.toFixed(0)}%`],
+        ["Last step", s.last_step_ms != null ? `${s.last_step_ms.toFixed(1)} ms` : "–"],
+        ["Status fetch", n.fetch_ms != null ? `${n.fetch_ms.toFixed(0)} ms` : "–"],
+        ["Steps", int(s.steps)],
+        ["Tokens", int(s.tokens)],
+        ["Up", dur(s.uptime_s)],
+      ];
+      body += `<dl class="facts">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("")}</dl>`;
+    } else {
+      body = `<div class="err">No status received yet.</div>`;
+    }
+    return `<article class="card node ${n.online ? "" : "off"}">
+      <div class="node-top"><i class="sw" style="margin-top:4px;background:${nodeColor(i)}"></i><div class="name">${title}</div><span class="badge">${state}</span></div>
+      ${meta ? `<div class="meta">${meta}</div>` : ""}${err}${body}</article>`;
+  }).join("");
+}
+
+// One tooltip for the layer map, positioned at the pointer.
+const segTip = $("#seg-tip");
+$("#layermap .bar").addEventListener("pointermove", (ev) => {
+  const seg = ev.target.closest(".seg");
+  if (!seg?.dataset.tip) { segTip.style.display = "none"; return; }
+  segTip.textContent = seg.dataset.tip;
+  segTip.style.display = "block";
+  segTip.style.left = `${Math.min(ev.pageX + 12, document.documentElement.clientWidth - segTip.offsetWidth - 8)}px`;
+  segTip.style.top = `${ev.pageY + 14}px`;
+});
+$("#layermap .bar").addEventListener("pointerleave", () => { segTip.style.display = "none"; });
+
+$("#tbl-btn").addEventListener("click", () => {
+  showTable = !showTable;
+  $("#tbl-btn").textContent = showTable ? "Hide table" : "Show table";
+  render();
+});
+window.addEventListener("resize", render);
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
+
+async function tick() {
+  try {
+    const res = await fetch("/api/status", { cache: "no-store" });
+    if (!res.ok) throw new Error(res.status);
+    data = await res.json();
+    $("#banner").style.display = "none";
+    render();
+  } catch {
+    $("#banner").style.display = "block";
+  }
+  setTimeout(tick, data?.interval_ms ?? 1000);
+}
+tick();
+</script>
+</body>
+</html>

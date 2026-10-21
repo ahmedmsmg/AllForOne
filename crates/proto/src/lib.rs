@@ -3,6 +3,8 @@
 //! Data moves around a ring: client -> node 1 -> ... -> node N -> client. Each hop sends straight
 //! to its successor (push-forward), so a token costs N one-way hops rather than N round trips.
 
+pub mod http;
+pub mod status;
 mod transport;
 
 use std::net::SocketAddr;

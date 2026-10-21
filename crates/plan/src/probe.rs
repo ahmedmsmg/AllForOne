@@ -190,6 +190,8 @@ fn tailscale_ip() -> Option<IpAddr> {
 fn disk_free(dir: &Path) -> Option<u64> {
     let abs = std::path::absolute(dir).ok()?;
     let existing = abs.ancestors().find(|p| p.exists())?.canonicalize().ok()?;
+    // Windows canonical paths are verbatim (`\\?\C:\...`) and never match a mount point like `C:\`.
+    let existing = PathBuf::from(existing.to_string_lossy().trim_start_matches(r"\\?\").to_string());
     let disks = Disks::new_with_refreshed_list();
     disks
         .iter()

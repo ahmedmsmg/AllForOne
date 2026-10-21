@@ -59,7 +59,54 @@ afo-client --model model.gguf --tokenizer tokenizer.json \
 
 Build with `--features cuda` or `--features metal` on `afo-node` or `afo-client` to use a GPU,
 then pass `--device cuda:0` or `--device metal`.
+
+**The CUDA toolkit must not be newer than the driver.** `nvidia-smi` shows the newest CUDA version
+the driver supports. Kernels compiled by a newer `nvcc` fail at load time with
+`CUDA_ERROR_UNSUPPORTED_PTX_VERSION`. Point the build at a toolkit no newer than that, and give
+the host compiler that toolkit supports (CUDA 12.0 needs gcc 12 or older):
+```sh
+export PATH=/usr/bin:$PATH        # where the older nvcc lives
+export NVCC_CCBIN=/usr/bin/gcc-12 CUDA_COMPUTE_CAP=86   # compute_cap from nvidia-smi --query-gpu=compute_cap --format=csv
+cargo clean --release -p candle-kernels -p cudarc -p candle-core   # after switching toolkits
+cargo build --release -p afo-node -p afo-client -p afo-plan -p afo-bench \
+  --features afo-node/cuda,afo-client/cuda,afo-plan/cuda
+```
+Results on a GPU match the CPU closely but not bit for bit. On Llama 3.2 1B, greedy output
+matched the CPU reference for 80 tokens before a near-tie went the other way.
 Each address must be reachable directly for now. NAT traversal comes in Phase 3.
+
+## Windows
+
+Everything runs natively on Windows 10 and 11 without WSL. `afo-plan` sees from each probe report
+which machines run Windows and prints PowerShell commands for them.
+
+**Build on the Windows machine:**
+1. Install [Rust](https://rustup.rs) with the default MSVC toolchain. Its installer offers the
+   Visual Studio Build Tools; accept them.
+2. CPU only: in PowerShell, `cargo build --release`. The programs are in `target\release\`.
+3. NVIDIA GPU: install the CUDA toolkit for Windows (no newer than the CUDA version `nvidia-smi`
+   shows; see above), then build from the **x64 Native Tools Command Prompt for VS** so `nvcc`
+   finds `cl.exe`:
+   ```bat
+   set CUDA_COMPUTE_CAP=86
+   cargo build --release -p afo-node -p afo-client -p afo-plan --features afo-node/cuda,afo-client/cuda,afo-plan/cuda
+   ```
+
+**Or cross-compile a CPU-only build from Linux** and copy the `.exe` files over. It needs only
+DLLs that ship with Windows:
+```sh
+rustup target add x86_64-pc-windows-gnu
+pip install ziglang && cargo install cargo-zigbuild
+cargo zigbuild --release --target x86_64-pc-windows-gnu
+```
+
+**Allow the ports through Windows Firewall** (PowerShell as Administrator). Nodes use UDP for the
+model traffic and TCP for the monitor's status checks. Add 7200 if this machine runs the client.
+```powershell
+New-NetFirewallRule -DisplayName "AllForOne UDP" -Direction Inbound -Protocol UDP -LocalPort 7100-7110,7200 -Action Allow -Profile Private,Domain
+New-NetFirewallRule -DisplayName "AllForOne TCP" -Direction Inbound -Protocol TCP -LocalPort 7100-7110 -Action Allow -Profile Private,Domain
+```
+If the network is set to "Public", either switch it to Private or add `Public` to `-Profile`.
 
 ## Planning a group
 

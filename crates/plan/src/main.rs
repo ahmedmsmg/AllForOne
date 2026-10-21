@@ -126,41 +126,101 @@ fn print_plan(c: &Candidate, plan: &Plan, reports: &[Report], args: &Args) {
         plan.network_ms,
         plan.client_ms,
     );
-    println!("\nEveryone below downloads the model ({}):", gb(c.file_bytes));
-    println!("  mkdir -p {dir} && curl -L -o {model} \\\n    {}", c.url());
-
-    // CPU decoding is fastest with one thread per physical core, which is what afo-probe measured.
-    let threads = |name: &str, device: &str| match reports.iter().find(|r| r.name == name) {
-        Some(r) if device == "cpu" => format!("RAYON_NUM_THREADS={} ", r.cores),
-        _ => String::new(),
+    let report = |name: &str| reports.iter().find(|r| r.name == name).expect("plan names a reported machine");
+    let get_model = |sh: Shell| {
+        format!("  {}{}{}", sh.mkdir(dir), sh.and(), sh.download(&c.url(), &model))
     };
+    println!("\nEach machine downloads the model ({}) into {dir}/, then starts its node(s).", gb(c.file_bytes));
+
     let mut machines: Vec<&str> = plan.nodes.iter().map(|n| n.machine.as_str()).collect();
     machines.dedup();
-    for m in machines {
-        println!("\n{m}:");
+    for &m in &machines {
+        let r = report(m);
+        let sh = Shell::of(r);
+        println!("\n{m} ({}):", sh.name());
+        println!("{}", get_model(sh));
         for n in plan.nodes.iter().filter(|n| n.machine == m) {
+            // CPU decoding is fastest with one thread per physical core, which is what afo-probe measured.
+            let threads = if n.device == "cpu" { sh.env("RAYON_NUM_THREADS", r.cores) } else { String::new() };
             println!(
-                "  {}afo-node --model {model} --layers {}..{} --listen 0.0.0.0:{} --device {} --max-seq {}",
-                threads(m, &n.device),
-                n.layers.start,
-                n.layers.end,
-                n.port,
-                n.device,
-                args.ctx
+                "  {threads}afo-node --model {model} --layers {}..{} --listen 0.0.0.0:{} --device {} --max-seq {}",
+                n.layers.start, n.layers.end, n.port, n.device, args.ctx
             );
         }
     }
 
+    let client = report(&plan.client);
+    let sh = Shell::of(client);
     let route: Vec<String> = plan.nodes.iter().map(|n| format!("{}:{}", addr(&n.machine), n.port)).collect();
-    println!("\n{} (client), once every node prints \"listening\":", plan.client);
-    println!("  curl -L -o {tokenizer} {}", c.tokenizer_url());
+    println!("\n{} (client, {}), once every node prints \"listening\":", plan.client, sh.name());
+    if !machines.contains(&plan.client.as_str()) {
+        println!("{}", get_model(sh));
+    }
+    println!("  {}", sh.download(&c.tokenizer_url(), &tokenizer));
+    let threads = if plan.client_device == "cpu" { sh.env("RAYON_NUM_THREADS", client.cores) } else { String::new() };
+    let nl = sh.continuation();
     println!(
-        "  {}afo-client --model {model} --tokenizer {tokenizer} --device {} --max-seq {} \\\n    --route {} \\\n    --advertise {} --listen 0.0.0.0:{} --prompt \"Hello\"",
-        threads(&plan.client, &plan.client_device),
+        "  {threads}afo-client --model {model} --tokenizer {tokenizer} --device {} --max-seq {}{nl}--route {}{nl}--advertise {} --listen 0.0.0.0:{} --prompt \"Hello\"",
         plan.client_device,
         args.ctx,
         route.join(","),
         addr(&plan.client),
         afo_plan::plan::BASE_PORT + 100,
     );
+}
+
+/// Command syntax for the shell each machine's commands are printed for.
+#[derive(Clone, Copy)]
+enum Shell {
+    Posix,
+    PowerShell,
+}
+
+impl Shell {
+    fn of(r: &Report) -> Self {
+        if r.os.starts_with("Windows") { Shell::PowerShell } else { Shell::Posix }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Shell::Posix => "shell",
+            Shell::PowerShell => "PowerShell",
+        }
+    }
+
+    fn env(self, var: &str, value: impl std::fmt::Display) -> String {
+        match self {
+            Shell::Posix => format!("{var}={value} "),
+            Shell::PowerShell => format!("$env:{var}={value}; "),
+        }
+    }
+
+    fn mkdir(self, dir: &str) -> String {
+        match self {
+            Shell::Posix => format!("mkdir -p {dir}"),
+            Shell::PowerShell => format!("New-Item -ItemType Directory -Force {dir} | Out-Null"),
+        }
+    }
+
+    fn and(self) -> &'static str {
+        match self {
+            Shell::Posix => " && ",
+            Shell::PowerShell => "; ",
+        }
+    }
+
+    /// Windows PowerShell aliases `curl` to a different command, so name the real one.
+    fn download(self, url: &str, path: &str) -> String {
+        match self {
+            Shell::Posix => format!("curl -L -o {path} {url}"),
+            Shell::PowerShell => format!("curl.exe -L -o {path} {url}"),
+        }
+    }
+
+    fn continuation(self) -> &'static str {
+        match self {
+            Shell::Posix => " \\\n    ",
+            Shell::PowerShell => " `\n    ",
+        }
+    }
 }

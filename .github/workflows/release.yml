@@ -1,0 +1,146 @@
+# Builds ready-to-run archives for every OS and GPU kind and attaches them to a GitHub release.
+# Push a tag like v0.2.0 to publish; install.sh and install.ps1 download from the latest release.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  BINS: afo afo-node afo-client afo-probe afo-plan afo-monitor
+  PACKAGES: -p afo -p afo-node -p afo-client -p afo-plan -p afo-monitor
+
+jobs:
+  build:
+    name: ${{ matrix.asset }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { asset: linux-x86_64-cpu, os: ubuntu-22.04 }
+          - { asset: linux-aarch64-cpu, os: ubuntu-22.04-arm }
+          - { asset: macos-arm64-metal, os: macos-15, features: "--features afo/metal,afo-node/metal,afo-client/metal,afo-plan/metal" }
+          - { asset: macos-x86_64-cpu, os: macos-15-intel }
+          - { asset: windows-x86_64-cpu, os: windows-2022 }
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build
+        shell: bash
+        run: cargo build --release --locked $PACKAGES ${{ matrix.features }}
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p pkg dist
+          if [ "$RUNNER_OS" = Windows ]; then
+            for b in $BINS; do cp "target/release/$b.exe" pkg/; done
+            (cd pkg && 7z a "../dist/afo-${{ matrix.asset }}.zip" . >/dev/null)
+          else
+            for b in $BINS; do cp "target/release/$b" pkg/; done
+            tar -C pkg -czf "dist/afo-${{ matrix.asset }}.tar.gz" .
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/*
+
+  build-cuda:
+    name: ${{ matrix.platform }}-x86_64-cuda-sm${{ matrix.cap }}
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    # A failed GPU build shouldn't block the rest; the installers fall back to the CPU build.
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        # The kernels only compute correctly on the compute capability they were built for (a
+        # 7.5 build runs on an 8.6 card but gives wrong results), so there is one build per GPU
+        # generation: 75 RTX 20 / GTX 16, 80 A100, 86 RTX 30, 89 RTX 40, 90 H100, 120 RTX 50.
+        cap: ["75", "80", "86", "89", "90", "120"]
+        platform: [linux, windows]
+        include:
+          - { platform: linux, os: ubuntu-22.04, container: "nvidia/cuda:12.8.1-devel-ubuntu22.04" }
+          - { platform: windows, os: windows-2022 }
+    env:
+      ASSET: ${{ matrix.platform }}-x86_64-cuda-sm${{ matrix.cap }}
+      CUDA_COMPUTE_CAP: ${{ matrix.cap }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Container prerequisites
+        if: matrix.container
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends curl ca-certificates build-essential pkg-config git
+          curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: CUDA toolkit
+        if: runner.os == 'Windows'
+        uses: Jimver/cuda-toolkit@v0.2.36
+        with:
+          cuda: "12.8.1"
+          method: network
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "curand", "curand_dev", "nvrtc", "nvrtc_dev"]'
+
+      - name: MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          # Find the bundled CUDA libraries next to the binaries. DT_RPATH (not RUNPATH) so the
+          # libraries' own dependencies resolve there too.
+          RUSTFLAGS: -C link-arg=-Wl,--disable-new-dtags,-rpath,$ORIGIN
+        run: cargo build --release --locked $PACKAGES --features afo/cuda,afo-node/cuda,afo-client/cuda,afo-plan/cuda
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: cargo build --release --locked $PACKAGES --features afo/cuda,afo-node/cuda,afo-client/cuda,afo-plan/cuda
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p pkg dist
+          if [ "$RUNNER_OS" = Windows ]; then
+            for b in $BINS; do cp "target/release/$b.exe" pkg/; done
+            for dll in cudart64_12.dll cublas64_12.dll cublasLt64_12.dll curand64_10.dll; do
+              cp "$CUDA_PATH/bin/$dll" pkg/
+            done
+            (cd pkg && 7z a "../dist/afo-$ASSET.zip" . >/dev/null)
+          else
+            for b in $BINS; do cp "target/release/$b" pkg/; done
+            for lib in libcudart.so.12 libcublas.so.12 libcublasLt.so.12 libcurand.so.10; do
+              cp -L "/usr/local/cuda/lib64/$lib" pkg/
+            done
+            tar -C pkg -czf "dist/afo-$ASSET.tar.gz" .
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ASSET }}
+          path: dist/*
+
+  publish:
+    needs: [build, build-cuda]
+    if: always() && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: dist/*
+          generate_release_notes: true

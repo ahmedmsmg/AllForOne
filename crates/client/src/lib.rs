@@ -262,6 +262,16 @@ pub mod chat {
         )
     }
 
+    /// Llama 3 instruct prompt for a whole conversation of `(role, text)` turns, where role is
+    /// `user` or `assistant`, ending ready for the assistant's next reply.
+    pub fn llama3_conversation(turns: &[(&str, &str)]) -> String {
+        let mut out = String::from("<|begin_of_text|>");
+        for (role, text) in turns {
+            out += &format!("<|start_header_id|>{role}<|end_header_id|>\n\n{text}<|eot_id|>");
+        }
+        out + "<|start_header_id|>assistant<|end_header_id|>\n\n"
+    }
+
     pub fn encode(tok: &Tokenizer, text: &str) -> Result<Vec<u32>> {
         Ok(tok.encode(text, false).map_err(|e| anyhow!(e))?.get_ids().to_vec())
     }
@@ -293,5 +303,19 @@ pub mod chat {
             self.printed = text.len();
             Some(new)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::chat;
+
+    #[test]
+    fn conversation_matches_single_turn_prompt() {
+        assert_eq!(chat::llama3_conversation(&[("user", "hi")]), chat::llama3_prompt("hi"));
+        let two = chat::llama3_conversation(&[("user", "a"), ("assistant", "b"), ("user", "c")]);
+        assert!(two.starts_with("<|begin_of_text|><|start_header_id|>user"));
+        assert!(two.contains("<|start_header_id|>assistant<|end_header_id|>\n\nb<|eot_id|>"));
+        assert!(two.ends_with("<|start_header_id|>assistant<|end_header_id|>\n\n"));
     }
 }

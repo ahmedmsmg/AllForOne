@@ -15,8 +15,12 @@ use crate::{catalog::Candidate, gb, probe::Report};
 const NODE_OVERHEAD: u64 = 512 << 20;
 /// Same for the client process, on top of its embedding and head.
 const CLIENT_OVERHEAD: u64 = 512 << 20;
+/// Port of the agent on every machine (TCP), which `afo host` talks to.
+pub const AGENT_PORT: u16 = 7100;
 /// First port for node processes; a machine running several gets consecutive ports.
-pub const BASE_PORT: u16 = 7100;
+pub const BASE_PORT: u16 = 7101;
+/// Port the client listens on for results coming back around the ring.
+pub const CLIENT_PORT: u16 = 7200;
 /// Beyond this many machines, all of them are used instead of searching subsets.
 const MAX_SUBSET_SEARCH: usize = 12;
 
@@ -64,6 +68,20 @@ struct Capacity {
     slot: usize,
     layers: usize,
     ms_per_layer: f64,
+}
+
+/// Every candidate's plan (or why it doesn't fit), and the index of the one to use: the best that
+/// fits and decodes at least `min_tok_s`. With `forced`, the first that fits, whatever its speed.
+pub fn choose(
+    candidates: Vec<Candidate>,
+    reports: &[Report],
+    o: &PlanOpts,
+    min_tok_s: f64,
+    forced: bool,
+) -> (Vec<(Candidate, Result<Plan, String>)>, Option<usize>) {
+    let results: Vec<_> = candidates.into_iter().map(|c| (c, evaluate(&c, reports, o))).collect();
+    let chosen = results.iter().position(|(_, r)| r.as_ref().is_ok_and(|p| forced || p.tok_per_s() >= min_tok_s));
+    (results, chosen)
 }
 
 /// Plans `c` onto the machines in `reports`, or explains why it doesn't fit.

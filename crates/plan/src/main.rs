@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use afo_plan::{
     catalog::{self, Candidate},
     gb,
-    plan::{Plan, PlanOpts, evaluate},
+    plan::{CLIENT_PORT, Plan, PlanOpts, choose},
     probe::{REPORT_VERSION, Report},
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -63,12 +63,8 @@ fn main() -> Result<()> {
         Some(id) => vec![catalog::find(id).with_context(|| format!("{id:?} is not in the catalog"))?],
         None => catalog::candidates(),
     };
-    let results: Vec<(Candidate, Result<Plan, String>)> =
-        candidates.into_iter().map(|c| (c, evaluate(&c, &reports, &opts))).collect();
-    let chosen = results.iter().find_map(|(c, r)| match r {
-        Ok(p) if args.model.is_some() || p.tok_per_s() >= args.min_tok_s => Some((c, p)),
-        _ => None,
-    });
+    let (results, chosen) = choose(candidates, &reports, &opts, args.min_tok_s, args.model.is_some());
+    let chosen = chosen.map(|i| (&results[i].0, results[i].1.as_ref().expect("chosen plan fits")));
 
     if args.json {
         let Some((_, plan)) = chosen else { bail!("no model fits") };
@@ -165,7 +161,7 @@ fn print_plan(c: &Candidate, plan: &Plan, reports: &[Report], args: &Args) {
         args.ctx,
         route.join(","),
         addr(&plan.client),
-        afo_plan::plan::BASE_PORT + 100,
+        CLIENT_PORT,
     );
 }
 

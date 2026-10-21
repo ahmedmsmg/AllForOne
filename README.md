@@ -19,6 +19,52 @@ client ──► node 1 (layers 0..a) ──► node 2 (a..b) ──► … ─�
 - **Swappable activation codecs** (`f32`, `f16`, `fp8`, `int8`, with a per-token scale). This is
   also where the security phase will plug in (for example RNS sharing).
 
+## Getting started
+
+Three steps. Everything else (measuring each machine, choosing the model, splitting it, downloading,
+connecting, the dashboard) is automatic.
+
+**1. The host makes a join code (once).** AllForOne connects machines over
+[Tailscale](https://tailscale.com), a private network that works through home routers and
+restrictive Wi-Fi. Sign in at [login.tailscale.com](https://login.tailscale.com). Ideally use an
+account just for AllForOne, so friends' machines join a network that holds nothing else. Go to
+**Settings → Keys → Generate auth key**, turn on **Reusable**, and copy the key (`tskey-auth-…`).
+That key is the group's join code. Anyone who has it can join the network, so share it only with
+the group.
+
+**2. Everyone, including the host, runs the installer with the join code:**
+
+```sh
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/ahmedmsmg/AllForOne/main/install.sh | sh -s -- tskey-auth-XXXX
+```
+```powershell
+# Windows (PowerShell)
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/ahmedmsmg/AllForOne/main/install.ps1))) tskey-auth-XXXX
+```
+
+The installer picks the build for the OS and GPU (NVIDIA, Apple silicon, or CPU), installs
+Tailscale and joins the network, and starts the AllForOne **agent** in the background. The agent
+starts again at every login. It measures the machine and waits for instructions.
+
+**3. The host starts a session:**
+
+```sh
+afo host
+```
+
+It lists the machines it finds and waits until you press Enter. Then it picks the best model the
+group can run, and every machine downloads the model and loads its layers. The dashboard opens in
+your browser, and a chat starts in the terminal.
+
+Useful options: `afo host --model llama-3.1-8b:Q4_K_M` picks the model yourself, `--min-tok-s 5`
+prefers speed over size, and `--hop-ms 5` suits machines in the same place. Run
+`afo agent --ram-limit-gb 8` to offer only part of a machine. Models are stored in
+`~/.allforone/models`.
+
+The dashboard is at http://127.0.0.1:7300 while `afo host` runs. It shows the ring's health,
+tokens per second, the layer map, and each machine's CPU, RAM and GPU use.
+
 ## Crates
 
 | crate | role |
@@ -31,8 +77,9 @@ client ──► node 1 (layers 0..a) ──► node 2 (a..b) ──► … ─�
 | `afo-bench` | Checks split execution against a single-machine reference and reports latency |
 | `afo-plan` | `afo-probe` measures a machine; `afo-plan` picks a model and layer split for the group |
 | `afo-monitor` | Web dashboard: which nodes are up, what they run, their resource use, tokens/s |
+| `afo` | Everyday CLI: `afo agent` on every machine, `afo host` to plan, load and chat |
 
-## Quickstart (one machine)
+## Development: one machine
 
 ```sh
 mkdir -p models
@@ -45,7 +92,10 @@ scripts/local-ring.sh                    # 3 nodes on localhost + correctness/la
 SIM_DELAY_MS=30 scripts/local-ring.sh    # emulate a 30 ms one-way WAN hop
 ```
 
-## Across machines
+## Manual setup (advanced)
+
+The pieces `afo host` automates can also be run by hand.
+
 
 ```sh
 # on each node machine (layers are half-open; the ranges must cover 0..n_layer in order)
@@ -75,7 +125,7 @@ Results on a GPU match the CPU closely but not bit for bit. On Llama 3.2 1B, gre
 matched the CPU reference for 80 tokens before a near-tie went the other way.
 Each address must be reachable directly for now. NAT traversal comes in Phase 3.
 
-## Windows
+## Building from source on Windows
 
 Everything runs natively on Windows 10 and 11 without WSL. `afo-plan` sees from each probe report
 which machines run Windows and prints PowerShell commands for them.

@@ -81,7 +81,7 @@ async fn main() -> Result<()> {
         Ok(listener) => {
             info!("status on http://{}{STATUS_PATH}", listener.local_addr()?);
             let activity = activity.clone();
-            tokio::spawn(http::serve(listener, move |path| match path {
+            tokio::spawn(http::serve(listener, move |req| match req.path.as_str() {
                 STATUS_PATH => {
                     let status = activity.lock().unwrap().snapshot(&info, &resources.lock().unwrap());
                     http::Response::json(serde_json::to_string(&status).expect("status serializes"))

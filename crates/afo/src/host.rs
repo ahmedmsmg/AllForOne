@@ -15,7 +15,7 @@ use afo_engine::{LoadOpts, Shard};
 use afo_plan::{
     catalog::{self, Candidate},
     gb,
-    plan::{AGENT_PORT, CLIENT_PORT, Plan, PlanOpts, choose},
+    plan::{AGENT_PORT, Plan, PlanOpts, choose},
     probe::Report,
 };
 use afo_proto::{NetOpts, http};
@@ -139,7 +139,9 @@ async fn serve(o: &HostOpts, c: &Candidate, plan: &Plan, members: &[Member], me:
     let tok = Tokenizer::from_file(tok_path).map_err(|e| anyhow!(e))?;
     let device = afo_engine::device(&plan.client_device)?;
     let local = Shard::load(model_path, &LoadOpts { layers: 0..0, embed: true, head: true, max_seq: o.ctx }, &device)?;
-    let listen = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), CLIENT_PORT);
+    // Any free port: the session tells the last node where to send results, and a fixed port
+    // would clash with another `afo host` on this machine.
+    let listen = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
     let mut pipe =
         RemotePipeline::connect(listen, Some(me), &route, CodecKind::F16, local.cfg.d_model, NetOpts::default()).await?;
 

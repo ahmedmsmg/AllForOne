@@ -24,7 +24,7 @@ have() { command -v "$1" >/dev/null 2>&1; }
 have curl || die "curl is required"
 have tar || die "tar is required"
 
-# NVIDIA builds are made per GPU generation (compute capability), with CUDA 12.8 (12.4 for 7.5
+# NVIDIA builds are made per GPU generation (compute capability), with CUDA 12.8 (12.0 for 7.5
 # cards), so they need a matching card and a driver supporting that CUDA version or newer.
 # Prints the build name, or fails.
 cuda_variant() {
@@ -32,7 +32,7 @@ cuda_variant() {
   cuda=$(nvidia-smi | sed -n 's/.*CUDA Version: *\([0-9]*\)\.\([0-9]*\).*/\1 \2/p' | head -n1)
   major=${cuda% *}; minor=${cuda#* }
   need=8
-  [ "$cap" = 75 ] && need=4
+  [ "$cap" = 75 ] && need=0
   if [ -z "$cuda" ] || [ "$major" -lt 12 ] || { [ "$major" -eq 12 ] && [ "$minor" -lt "$need" ]; }; then
     say "NVIDIA driver supports CUDA ${major:-?}.${minor:-?}; the GPU build needs 12.$need+. Using the CPU build (update the driver to use the GPU)." >&2
     return 1

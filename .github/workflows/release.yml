@@ -71,13 +71,15 @@ jobs:
         include:
           - { platform: linux, os: ubuntu-22.04, cuda: "12.8.1", container: "nvidia/cuda:12.8.1-devel-ubuntu22.04" }
           - { platform: windows, os: windows-2022, cuda: "12.8.1" }
-          # candle's kernels clash with half-precision helpers CUDA 12.8 added for older GPUs, so
-          # compute capability 7.5 builds with CUDA 12.4.
-          - { platform: linux, cap: "75", cuda: "12.4.1", container: "nvidia/cuda:12.4.1-devel-ubuntu22.04" }
-          - { platform: windows, cap: "75", cuda: "12.4.1" }
+          # candle's kernels define half-precision helpers that newer CUDA versions also define
+          # for pre-Ampere GPUs (12.4 and 12.8 both clash), so compute capability 7.5 builds with
+          # CUDA 12.0, which predates the newest MSVC on the runner.
+          - { platform: linux, cap: "75", cuda: "12.0.1", container: "nvidia/cuda:12.0.1-devel-ubuntu22.04" }
+          - { platform: windows, cap: "75", cuda: "12.0.1", nvcc_flags: "-allow-unsupported-compiler" }
     env:
       ASSET: ${{ matrix.platform }}-x86_64-cuda-sm${{ matrix.cap }}
       CUDA_COMPUTE_CAP: ${{ matrix.cap }}
+      NVCC_APPEND_FLAGS: ${{ matrix.nvcc_flags }}
     steps:
       - uses: actions/checkout@v7
 

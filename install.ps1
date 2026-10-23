@@ -21,13 +21,13 @@ $Bin = Join-Path $Dir "bin"
 function Say($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
 
 # --- which build ---------------------------------------------------------------------------
-# NVIDIA builds are made per GPU generation (compute capability), with CUDA 12.8 (12.4 for 7.5
+# NVIDIA builds are made per GPU generation (compute capability), with CUDA 12.8 (12.0 for 7.5
 # cards), so they need a matching card and a driver supporting that CUDA version or newer.
 $variant = "windows-x86_64-cpu"
 if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
     $smi = (nvidia-smi) -join "`n"
     $cap = ((nvidia-smi --query-gpu=compute_cap --format=csv,noheader) | Select-Object -First 1).Trim().Replace(".", "")
-    $need = if ($cap -eq "75") { [version]"12.4" } else { [version]"12.8" }
+    $need = if ($cap -eq "75") { [version]"12.0" } else { [version]"12.8" }
     if (-not (@("75", "80", "86", "89", "90", "120") -contains $cap)) {
         Say "No GPU build for compute capability $cap; using the CPU build."
     } elseif ($smi -match "CUDA Version:\s*(\d+)\.(\d+)" -and [version]"$($Matches[1]).$($Matches[2])" -ge $need) {

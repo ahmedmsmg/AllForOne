@@ -1,0 +1,108 @@
+# Builds one NVIDIA archive (one OS, one GPU generation). The release workflow runs it for every
+# generation; run it by hand (Actions → cuda-build → Run workflow) to rebuild a single archive
+# and replace it in an existing release.
+name: cuda-build
+
+on:
+  workflow_call:
+    inputs:
+      platform: { type: string, required: true }
+      cap: { type: string, required: true }
+      cuda: { type: string, default: "12.8.1" }
+      nvcc_flags: { type: string, default: "" }
+      release: { type: string, default: "" }
+  workflow_dispatch:
+    inputs:
+      platform: { type: choice, options: [linux, windows], required: true }
+      cap: { description: "Compute capability without the dot, e.g. 75", type: string, required: true }
+      cuda: { description: "CUDA toolkit version", type: string, default: "12.8.1" }
+      nvcc_flags: { description: "Extra nvcc flags (NVCC_APPEND_FLAGS)", type: string, default: "" }
+      release: { description: "Release tag to upload the archive to (empty: keep it as a workflow artifact)", type: string, default: "" }
+
+permissions:
+  contents: write
+
+env:
+  CARGO_PROFILE_RELEASE_DEBUG: "0"
+  CARGO_PROFILE_RELEASE_STRIP: symbols
+  BINS: afo afo-node afo-client afo-probe afo-plan afo-monitor
+  ASSET: ${{ inputs.platform }}-x86_64-cuda-sm${{ inputs.cap }}
+  CUDA_COMPUTE_CAP: ${{ inputs.cap }}
+  NVCC_APPEND_FLAGS: ${{ inputs.nvcc_flags }}
+
+jobs:
+  build:
+    name: ${{ inputs.platform }}-x86_64-cuda-sm${{ inputs.cap }}
+    runs-on: ${{ inputs.platform == 'linux' && 'ubuntu-22.04' || 'windows-2022' }}
+    container: ${{ inputs.platform == 'linux' && format('nvidia/cuda:{0}-devel-ubuntu22.04', inputs.cuda) || '' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Container prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends curl ca-certificates build-essential pkg-config git
+          curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli.gpg
+          echo "deb [signed-by=/usr/share/keyrings/githubcli.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
+          apt-get update && apt-get install -y --no-install-recommends gh
+
+      - name: CUDA toolkit
+        if: runner.os == 'Windows'
+        uses: Jimver/cuda-toolkit@v0.2.36
+        with:
+          cuda: ${{ inputs.cuda }}
+          method: network
+          # thrust carries the nv/target headers, which older toolkits don't put in nvcc.
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "curand", "curand_dev", "nvrtc", "nvrtc_dev", "thrust"]'
+
+      - name: MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          # Find the bundled CUDA libraries next to the binaries. DT_RPATH (not RUNPATH) so the
+          # libraries' own dependencies resolve there too.
+          RUSTFLAGS: -C link-arg=-Wl,--disable-new-dtags,-rpath,$ORIGIN
+        run: cargo build --release --locked -p afo -p afo-node -p afo-client -p afo-plan -p afo-monitor --features afo/cuda,afo-node/cuda,afo-client/cuda,afo-plan/cuda
+
+      # PowerShell, not Git Bash: Git Bash's /usr/bin/link shadows MSVC's link.exe.
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: cargo build --release --locked -p afo -p afo-node -p afo-client -p afo-plan -p afo-monitor --features afo/cuda,afo-node/cuda,afo-client/cuda,afo-plan/cuda
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p pkg dist
+          if [ "$RUNNER_OS" = Windows ]; then
+            for b in $BINS; do cp "target/release/$b.exe" pkg/; done
+            for dll in cudart64_12.dll cublas64_12.dll cublasLt64_12.dll curand64_10.dll; do
+              cp "$CUDA_PATH/bin/$dll" pkg/
+            done
+            (cd pkg && 7z a "../dist/afo-$ASSET.zip" . >/dev/null)
+          else
+            for b in $BINS; do cp "target/release/$b" pkg/; done
+            for lib in libcudart.so.12 libcublas.so.12 libcublasLt.so.12 libcurand.so.10; do
+              cp -L "/usr/local/cuda/lib64/$lib" pkg/
+            done
+            tar -C pkg -czf "dist/afo-$ASSET.tar.gz" .
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ASSET }}
+          path: dist/*
+
+      - name: Upload to release ${{ inputs.release }}
+        if: inputs.release != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ inputs.release }}" dist/* --clobber --repo "$GITHUB_REPOSITORY"

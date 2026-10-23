@@ -55,11 +55,7 @@ jobs:
           path: dist/*
 
   build-cuda:
-    name: ${{ matrix.platform }}-x86_64-cuda-sm${{ matrix.cap }}
-    runs-on: ${{ matrix.os }}
-    container: ${{ matrix.container }}
-    # A failed GPU build shouldn't block the rest; the installers fall back to the CPU build.
-    continue-on-error: true
+    name: cuda
     strategy:
       fail-fast: false
       matrix:
@@ -69,82 +65,23 @@ jobs:
         cap: ["75", "80", "86", "89", "90", "120"]
         platform: [linux, windows]
         include:
-          - { platform: linux, os: ubuntu-22.04, cuda: "12.8.1", container: "nvidia/cuda:12.8.1-devel-ubuntu22.04" }
-          - { platform: windows, os: windows-2022, cuda: "12.8.1" }
-          # candle's kernels define half-precision helpers that newer CUDA versions also define
-          # for pre-Ampere GPUs (12.4 and 12.8 both clash), so compute capability 7.5 builds with
-          # CUDA 12.0, which predates the newest MSVC on the runner.
-          - { platform: linux, cap: "75", cuda: "12.0.1", container: "nvidia/cuda:12.0.1-devel-ubuntu22.04" }
-          - { platform: windows, cap: "75", cuda: "12.0.1", nvcc_flags: "-allow-unsupported-compiler" }
-    env:
-      ASSET: ${{ matrix.platform }}-x86_64-cuda-sm${{ matrix.cap }}
-      CUDA_COMPUTE_CAP: ${{ matrix.cap }}
-      NVCC_APPEND_FLAGS: ${{ matrix.nvcc_flags }}
-    steps:
-      - uses: actions/checkout@v7
+          # candle's kernels define half-precision helpers that CUDA 12.4+ also defines for
+          # pre-Ampere GPUs, so 7.5 builds with CUDA 12.0. On Windows, MSVC's STL rejects CUDA
+          # older than 12.4 unless told to allow the mismatch.
+          - { cap: "75", cuda: "12.0.1" }
+          - { platform: windows, cap: "75", nvcc_flags: "-allow-unsupported-compiler -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH" }
+    uses: ./.github/workflows/cuda-build.yml
+    with:
+      platform: ${{ matrix.platform }}
+      cap: ${{ matrix.cap }}
+      cuda: ${{ matrix.cuda || '12.8.1' }}
+      nvcc_flags: ${{ matrix.nvcc_flags || '' }}
 
-      - name: Container prerequisites
-        if: matrix.container
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends curl ca-certificates build-essential pkg-config git
-          curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-
-      - name: CUDA toolkit
-        if: runner.os == 'Windows'
-        uses: Jimver/cuda-toolkit@v0.2.36
-        with:
-          cuda: ${{ matrix.cuda }}
-          method: network
-          # thrust carries the nv/target headers, which older toolkits don't put in nvcc.
-          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "curand", "curand_dev", "nvrtc", "nvrtc_dev", "thrust"]'
-
-      - name: MSVC environment
-        if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1.13.0
-
-      - name: Build (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        env:
-          # Find the bundled CUDA libraries next to the binaries. DT_RPATH (not RUNPATH) so the
-          # libraries' own dependencies resolve there too.
-          RUSTFLAGS: -C link-arg=-Wl,--disable-new-dtags,-rpath,$ORIGIN
-        run: cargo build --release --locked $PACKAGES --features afo/cuda,afo-node/cuda,afo-client/cuda,afo-plan/cuda
-
-      # PowerShell, not Git Bash: Git Bash's /usr/bin/link shadows MSVC's link.exe.
-      - name: Build (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: cargo build --release --locked -p afo -p afo-node -p afo-client -p afo-plan -p afo-monitor --features afo/cuda,afo-node/cuda,afo-client/cuda,afo-plan/cuda
-
-      - name: Package
-        shell: bash
-        run: |
-          mkdir -p pkg dist
-          if [ "$RUNNER_OS" = Windows ]; then
-            for b in $BINS; do cp "target/release/$b.exe" pkg/; done
-            for dll in cudart64_12.dll cublas64_12.dll cublasLt64_12.dll curand64_10.dll; do
-              cp "$CUDA_PATH/bin/$dll" pkg/
-            done
-            (cd pkg && 7z a "../dist/afo-$ASSET.zip" . >/dev/null)
-          else
-            for b in $BINS; do cp "target/release/$b" pkg/; done
-            for lib in libcudart.so.12 libcublas.so.12 libcublasLt.so.12 libcurand.so.10; do
-              cp -L "/usr/local/cuda/lib64/$lib" pkg/
-            done
-            tar -C pkg -czf "dist/afo-$ASSET.tar.gz" .
-          fi
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: ${{ env.ASSET }}
-          path: dist/*
-
+  # Publishes whatever built: a failed GPU build shouldn't hold back the rest (the installers
+  # fall back to the CPU build). Not on a cancelled run, which would publish a partial release.
   publish:
     needs: [build, build-cuda]
-    if: always() && startsWith(github.ref, 'refs/tags/')
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/download-artifact@v8

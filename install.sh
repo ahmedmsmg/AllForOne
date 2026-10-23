@@ -87,6 +87,15 @@ for rc in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
     grep -qsF "$BIN" "$rc" || printf '\n# AllForOne\n%s\n' "$line" >> "$rc"
   fi
 done
+# The shell running this installer keeps its old PATH, so also link the commands into a directory
+# it already searches, when there is one.
+linked=""
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*)
+    for b in afo afo-probe afo-plan afo-monitor; do ln -sf "$BIN/$b" "$HOME/.local/bin/$b"; done
+    linked=1
+    ;;
+esac
 export PATH="$BIN:$PATH"
 
 # --- Tailscale ------------------------------------------------------------------------------
@@ -178,5 +187,9 @@ else
 fi
 
 say "Done. This machine is now offering itself to the group ($variant)."
-echo "    To start a session from this machine:  afo host"
+if [ -n "$linked" ]; then
+  echo "    To start a session from this machine:  afo host"
+else
+  echo "    To start a session from this machine, open a new terminal and run:  afo host"
+fi
 echo "    Agent log:                              $DIR/logs/agent.log (or: journalctl --user -u allforone-agent)"
